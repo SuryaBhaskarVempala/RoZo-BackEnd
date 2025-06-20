@@ -6,6 +6,9 @@ require('dotenv').config();
 const cors = require('cors');
 const UserRouter = require('./routes/User');
 const connection = require('./connections/DB');
+const Razorpay = require('razorpay');
+const crypto = require('crypto');
+const { validatePreStock } = require('./utils/lock');
 
 
 connection(process.env.MONGO_URL);
@@ -51,7 +54,7 @@ async function insertData() {
                 "https://i.ibb.co/tMgNcTyZ/Gemini-Generated-Image-jc95o9jc95o9jc95.png",
                 "https://i.ibb.co/Xrs6nDTQ/Gemini-Generated-Image-jc95o8jc95o8jc95.png",
             ],
-            basePrice: 45,
+            basePrice: 40,
             sizeInfo: {
                 small: { potSize: "6 inch diameter", plantHeight: "12-18 inches", description: "Perfect for desks and small spaces", price: 40 },
                 medium: { potSize: "8 inch diameter", plantHeight: "24-30 inches", description: "Great for side tables and shelves", price: 50 },
@@ -95,7 +98,7 @@ async function insertData() {
                 "https://i.ibb.co/nqWsj0Z9/Gemini-Generated-Image-n55v5n55v5n55v5n.png",
                 "https://i.ibb.co/WpdwhqRD/Gemini-Generated-Image-8ppxyt8ppxyt8ppx.png"
             ],
-            basePrice: 35,
+            basePrice: 40,
             sizeInfo: {
                 small: { potSize: "5 inch diameter", plantHeight: "8-12 inches", description: "Compact size for any corner", price: 40 },
                 medium: { potSize: "7 inch diameter", plantHeight: "18-24 inches", description: "Perfect tabletop companion", price: 50 },
@@ -139,9 +142,9 @@ async function insertData() {
                 "https://i.ibb.co/8g27mwqM/Gemini-Generated-Image-308u2e308u2e308u.png",
                 "https://i.ibb.co/d0C3tG33/Gemini-Generated-Image-308u2a308u2a308u.png"
             ],
-            basePrice: 65,
+            basePrice: 45,
             sizeInfo: {
-                small: { potSize: "6 inch diameter", plantHeight: "18-24 inches", description: "Young plant with room to grow", price: 40 },
+                small: { potSize: "6 inch diameter", plantHeight: "18-24 inches", description: "Young plant with room to grow", price: 45 },
                 medium: { potSize: "9 inch diameter", plantHeight: "36-48 inches", description: "Established beauty for any room", price: 50 },
                 large: { potSize: "14 inch diameter", plantHeight: "60-72 inches", description: "Magnificent tree for spacious areas", price: 60 }
             },
@@ -229,8 +232,8 @@ async function insertData() {
             ],
             basePrice: 50,
             sizeInfo: {
-                small: { potSize: "6 inch diameter", plantHeight: "15-20 inches", description: "Young glossy beauty", price: 40 },
-                medium: { potSize: "8 inch diameter", plantHeight: "28-35 inches", description: "Developing into a stunning tree", price: 50 },
+                small: { potSize: "6 inch diameter", plantHeight: "15-20 inches", description: "Young glossy beauty", price: 50 },
+                medium: { potSize: "8 inch diameter", plantHeight: "28-35 inches", description: "Developing into a stunning tree", price: 55 },
                 large: { potSize: "12 inch diameter", plantHeight: "45-55 inches", description: "Majestic indoor tree specimen", price: 60 }
             },
             characteristics: [
@@ -261,8 +264,71 @@ async function insertData() {
         }
     ]
 
-    const plantsData  = await Plant.insertMany(plants);
+    const plantsData = await Plant.insertMany(plants);
     console.log("Data inserted successfully");
     return plantsData;
 }
 
+
+
+app.post("/order", async (req, res) => {
+    const { items = [], amount, currency, receipt } = req.body;
+
+    try {
+        const stockFailures = [];
+
+        for (const item of items) {
+            const { productId, selectedSize, selectedColor, quantity } = item;
+            const stockOk = await validatePreStock(productId, selectedSize, selectedColor, quantity);
+
+            if (!stockOk.success) {
+                stockFailures.push({
+                    productId,
+                    message: stockOk.message,
+                });
+            }
+        }
+
+        // If any stock failure, return them all at once
+        if (stockFailures.length > 0) {
+            return res.status(400).json({
+                success: false,
+                message: "Some items are out of stock",
+                failures: stockFailures,
+            });
+        }
+
+        const razorpay = new Razorpay({
+            key_id: process.env.RAZORPAY_KEY_ID,
+            key_secret: process.env.RAZORPAY_SECRET,
+        });
+
+        const order = await razorpay.orders.create({ amount, currency, receipt });
+
+        if (!order) {
+            return res.status(500).send("Error creating Razorpay order");
+        }
+
+        res.json(order);
+    } catch (err) {
+        console.error("Error in /order:", err);
+        res.status(500).send("Internal Server Error");
+    }
+});
+
+
+
+// Razorpay payment signature validation
+app.post("/order/validate", async (req, res) => {
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+
+    const sha = crypto.createHmac("sha256", process.env.RAZORPAY_SECRET);
+    sha.update(`${razorpay_order_id}|${razorpay_payment_id}`);
+    const digest = sha.digest("hex");
+
+    if (digest !== razorpay_signature) {
+        return res.status(400).json({ msg: "Transaction is not legit!" });
+    }
+
+    res.json({ msg: "success", orderId: razorpay_order_id, paymentId: razorpay_payment_id });
+});

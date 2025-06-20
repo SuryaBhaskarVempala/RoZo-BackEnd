@@ -1,32 +1,14 @@
+// 📁 routes/Orders.js
 const { default: mongoose } = require("mongoose");
 const Plant = require("../Schemas/Plant");
 const Orders = require("../Schemas/Order");
 const Users = require("../Schemas/User");
 const logger = require("../utils/logger");
+const { acquireLock, releaseLock } = require("../utils/lock");
 
-// 🛑 In-memory lock map
-const plantLocks = new Map();
-
-const acquireLock = (plantId) => {
-  return new Promise(resolve => {
-    const tryLock = () => {
-      if (!plantLocks.has(plantId)) {
-        plantLocks.set(plantId, true);
-        resolve();
-      } else {
-        setTimeout(tryLock, 10);
-      }
-    };
-    tryLock();
-  });
-};
-
-const releaseLock = (plantId) => {
-  plantLocks.delete(plantId);
-};
-
+// ✅ Place Order after Razorpay Payment Success
 const placeOrder = async (req, res) => {
-  const endpoint = "[POST /orders/place]";
+  const endpoint = "[POST /orders/place-order]";
   try {
     const {
       name,
@@ -37,7 +19,9 @@ const placeOrder = async (req, res) => {
       user,
       deliveryAddress,
       paymentMethod,
-      paymentStatus
+      paymentStatus,
+      razorpayOrderId,
+      razorpayPaymentId
     } = req.body;
 
     logger.info(`${endpoint} Incoming order from user: ${user}`);
@@ -84,10 +68,10 @@ const placeOrder = async (req, res) => {
 
         if (!updateResult) {
           releaseLock(productId);
-          logger.warn(`${endpoint} Insufficient stock for ${productId} (Color: ${selectedColor}, Size: ${selectedSize})`);
+          logger.warn(`${endpoint} Insufficient stock for ${productId}`);
           return res.status(400).json({
             success: false,
-            message: `Insufficient stock for plant ${productId}, color ${selectedColor}, size ${selectedSize}`
+            message: `Insufficient stock for ${productId} (Color: ${selectedColor}, Size: ${selectedSize})`
           });
         }
 
@@ -112,7 +96,9 @@ const placeOrder = async (req, res) => {
         { step: 'Order Placed', completed: true, date: new Date() },
         { step: 'Shipped', completed: false, date: null },
         { step: 'Delivered', completed: false, date: null }
-      ]
+      ],
+      razorpayOrderId,
+      razorpayPaymentId
     });
 
     await newOrder.save();
@@ -142,11 +128,12 @@ const placeOrder = async (req, res) => {
   }
 };
 
+// ✅ Get Multiple Orders by ID
 const getOrders = async (req, res) => {
   const endpoint = "[GET /orders]";
   try {
     const ids = req.query.ids?.split(',') || [];
-    logger.info(`${endpoint} Fetching orders with IDs: ${ids.join(', ')}`);
+    logger.info(`${endpoint} Fetching orders: ${ids.join(', ')}`);
 
     const objectIds = ids.map(id => new mongoose.Types.ObjectId(id));
     const orders = await Orders.find({ _id: { $in: objectIds } });

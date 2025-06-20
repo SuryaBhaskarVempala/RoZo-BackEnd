@@ -31,7 +31,13 @@ const orderSchema = new mongoose.Schema({
   },
   paymentMethod: {
     type: String,
-    default: 'via upi'
+    default: 'via RazorPay'
+  },
+  razorpayOrderId : {
+    type: String,
+  },
+  razorpayPaymentId: {
+    type: String,
   },
   paymentStatus: {
     type: String,
