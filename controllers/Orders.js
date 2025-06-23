@@ -129,7 +129,7 @@ const placeOrder = async (req, res) => {
 };
 
 // ✅ Get Multiple Orders by ID
-const getOrders = async (req, res) => {
+const getOrdersForUser = async (req, res) => {
   const endpoint = "[GET /orders]";
   try {
     const ids = req.query.ids?.split(',') || [];
@@ -146,7 +146,48 @@ const getOrders = async (req, res) => {
   }
 };
 
+
+const getOrders = async (req, res) => {
+  try {
+    const orders = await Orders.find({
+      'trackingSteps.step': { $all: ['Order Placed', 'Shipped', 'Delivered'] },
+      'trackingSteps.completed': false
+    }).sort({ createdAt: -1 });
+
+    res.status(200).json(orders);
+  } catch (err) {
+    console.error("Failed to fetch orders with incomplete steps:", err);
+    res.status(500).json({ message: 'Server error while fetching orders' });
+  }
+}
+
+
+const updateTrackingSteps = async (req, res) => {
+  try {
+    const { orderId, trackingSteps } = req.body;
+
+    const cleanedTrackingSteps = trackingSteps.map(step => ({
+      ...step,
+      date: step.date ? new Date(step.date) : null,
+    }));
+
+    const updatedOrder = await Orders.findByIdAndUpdate(
+      new mongoose.Types.ObjectId(orderId),
+      { $set: { trackingSteps: cleanedTrackingSteps } },
+      { new: true }
+    );
+
+    res.json({ success: true, order: updatedOrder });
+  } catch (err) {
+    console.error("Failed to update tracking steps", err);
+    res.status(500).json({ success: false, error: 'Server error' });
+  }
+}
+
+
 module.exports = {
   placeOrder,
-  getOrders
+  getOrders,
+  getOrdersForUser,
+  updateTrackingSteps
 };
