@@ -136,8 +136,10 @@ const getOrdersForUser = async (req, res) => {
     logger.info(`${endpoint} Fetching orders: ${ids.join(', ')}`);
 
     const objectIds = ids.map(id => new mongoose.Types.ObjectId(id));
-    const orders = await Orders.find({ _id: { $in: objectIds } });
+    const orders = await Orders.find({ _id: { $in: objectIds } })
+      .sort({ createdAt: -1 }); // Sort by createdAt descending
 
+      
     logger.info(`${endpoint} Fetched ${orders.length} orders`);
     res.json(orders);
   } catch (error) {
